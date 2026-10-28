@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Fake nvidia-smi for smoke-testing gpu-ai-check on a machine without an NVIDIA GPU.
+
+Supports only the invocations the tool uses: --id, --query-gpu, --format, -l.
+Environment FAKE_SMI_NEW_DRIVER=1 makes clocks_event_reasons.active the valid throttle field
+instead of clocks_throttle_reasons.active. Values are invented and say nothing about real hardware.
+"""
+import os
+import sys
+import time
+
+LABEL = {
+    "timestamp": "timestamp",
+    "name": "name",
+    "driver_version": "driver_version",
+    "temperature.gpu": "temperature.gpu",
+    "power.draw": "power.draw [W]",
+    "clocks.current.graphics": "clocks.current.graphics [MHz]",
+    "clocks.current.memory": "clocks.current.memory [MHz]",
+    "memory.used": "memory.used [MiB]",
+    "memory.total": "memory.total [MiB]",
+    "utilization.gpu": "utilization.gpu [%]",
+    "clocks_throttle_reasons.active": "clocks_throttle_reasons.active",
+    "clocks_event_reasons.active": "clocks_event_reasons.active",
+}
+
+
+def valid_fields():
+    f = set(LABEL)
+    if os.environ.get("FAKE_SMI_NEW_DRIVER") == "1":
+        f.discard("clocks_throttle_reasons.active")
+    else:
+        f.discard("clocks_event_reasons.active")
+    return f
+
+
+def value(field, n, units):
+    idle = n == 0
+    table = {
+        "timestamp": time.strftime("%Y/%m/%d %H:%M:%S") + ".000",
+        "name": "NVIDIA GeForce FAKE 3060",
+        "driver_version": "999.99",
+        "temperature.gpu": str(48 if idle else min(75, 55 + n)),
+        "power.draw": "20.00" if idle else "168.50",
+        "clocks.current.graphics": "210" if idle else "1790",
+        "clocks.current.memory": "405" if idle else "7300",
+        "memory.used": "800" if idle else "11400",
+        "memory.total": "12288",
+        "utilization.gpu": "4" if idle else "99",
+        "clocks_throttle_reasons.active": "0x0000000000000001" if idle else "0x0000000000000004",
+        "clocks_event_reasons.active": "0x0000000000000001" if idle else "0x0000000000000004",
+    }
+    v = table[field]
+    if not units:
+        return v
+    suffix = {"power.draw": " W", "clocks.current.graphics": " MHz", "clocks.current.memory": " MHz",
+              "memory.used": " MiB", "memory.total": " MiB", "utilization.gpu": " %"}
+    return v + suffix.get(field, "")
+
+
+def main():
+    args = sys.argv[1:]
+    fields = None
+    fmt = "csv"
+    loop = None
+    dev = 0
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a.startswith("--query-gpu="):
+            fields = a.split("=", 1)[1].split(",")
+        elif a.startswith("--format="):
+            fmt = a.split("=", 1)[1]
+        elif a.startswith("--id="):
+            dev = int(a.split("=", 1)[1])
+        elif a in ("-l", "--loop"):
+            i += 1
+            loop = float(args[i])
+        i += 1
+
+    if dev != 0:
+        sys.stderr.write("No devices were found\n")
+        sys.exit(6)
+    if fields is None:
+        sys.stderr.write("fake nvidia-smi: only --query-gpu is supported\n")
+        sys.exit(2)
+    ok = valid_fields()
+    for f in fields:
+        if f not in ok:
+            sys.stderr.write('Field "%s" is not a valid field to query.\n' % f)
+            sys.exit(2)
+
+    parts = fmt.split(",")
+    noheader = "noheader" in parts
+    units = "nounits" not in parts
+
+    if loop is None:
+        print(", ".join(value(f, 1, units) for f in fields))
+        return
+
+    if not noheader:
+        print(", ".join(LABEL[f] for f in fields))
+        sys.stdout.flush()
+    n = 0
+    while True:
+        print(", ".join(value(f, n, units) for f in fields))
+        sys.stdout.flush()
+        n += 1
+        time.sleep(loop)
+
+
+if __name__ == "__main__":
+    main()

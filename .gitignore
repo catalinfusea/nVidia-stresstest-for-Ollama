@@ -1,0 +1,9 @@
+# tool output directories
+gpu-ai-check-*/
+# local logs
+*.log
+# editor / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
